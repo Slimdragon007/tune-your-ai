@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { parseResponse } from "@/lib/parseResponse";
 
 const PHASES = [
   {
@@ -242,21 +243,18 @@ export default function AITuner() {
         }),
       });
 
-      const data = await response.json();
-      const raw = (data.text || "")
-        .replace(/^```(?:json)?\s*\n?/i, "")
-        .replace(/\n?```\s*$/i, "")
-        .trim();
-
-      let parsed: { reply: string; bootFile: string };
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        parsed = {
-          reply: raw,
-          bootFile: `${PHASES[currentPhase].label.toUpperCase()}\n${userMsg}`,
-        };
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
       }
+
+      const data = await response.json();
+      const raw = data.text || "";
+
+      const parsed = parseResponse(
+        raw,
+        PHASES[currentPhase].label.toUpperCase(),
+        userMsg
+      );
 
       setMessages((prev) => [
         ...prev,
@@ -291,7 +289,7 @@ export default function AITuner() {
         ...prev,
         {
           role: "assistant",
-          text: "Connection hiccup. Your answer was saved. Let me try that again.",
+          text: "Something went wrong. Please try sending your answer again.",
           phase: currentPhase,
         },
       ]);

@@ -13,15 +13,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const response = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 1000,
-    system: systemPrompt,
-    messages: [{ role: "user", content: message }],
-  });
+  try {
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 2048,
+      system: systemPrompt,
+      messages: [{ role: "user", content: message }],
+    });
 
-  const text =
-    response.content[0].type === "text" ? response.content[0].text : "";
+    const text =
+      response.content?.[0]?.type === "text" ? response.content[0].text : "";
 
-  return NextResponse.json({ text });
+    return NextResponse.json({ text });
+  } catch {
+    return NextResponse.json(
+      { error: "Failed to generate response" },
+      { status: 502 }
+    );
+  }
 }
