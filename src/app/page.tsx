@@ -153,6 +153,30 @@ export default function AITuner() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
+  // Load saved boot file on mount
+  useEffect(() => {
+    const saved = localStorage.getItem("ai-tuner-boot");
+    if (saved) {
+      try {
+        const sections: BootSection[] = JSON.parse(saved);
+        if (sections.length > 0) {
+          setBootSections(sections);
+          setPhase(sections.length - 1);
+          setComplete(sections.length >= PHASES.length);
+        }
+      } catch {
+        // ignore corrupted data
+      }
+    }
+  }, []);
+
+  // Save boot file whenever it updates
+  useEffect(() => {
+    if (bootSections.length > 0) {
+      localStorage.setItem("ai-tuner-boot", JSON.stringify(bootSections));
+    }
+  }, [bootSections]);
+
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
@@ -301,9 +325,147 @@ export default function AITuner() {
 
   const fullBootFile = bootSections.map((s) => s.content).join("\n\n");
 
+  const [copied, setCopied] = useState(false);
+
   const copyBoot = () => {
     navigator.clipboard.writeText(fullBootFile);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
+
+  const downloadBoot = () => {
+    const blob = new Blob([fullBootFile], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "my-ai-boot-file.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const startFresh = () => {
+    localStorage.removeItem("ai-tuner-boot");
+    setBootSections([]);
+    setMessages([]);
+    setPhase(-1);
+    setComplete(false);
+    setShowBoot(false);
+  };
+
+  // Returning user with saved boot file
+  if (phase !== -1 && complete && messages.length === 0) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: C.cream,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "2rem",
+          fontFamily: "var(--font-dm-sans), sans-serif",
+        }}
+      >
+        <div style={{ maxWidth: 520, textAlign: "center" }}>
+          <div
+            style={{
+              fontSize: "0.75rem",
+              letterSpacing: "0.2em",
+              textTransform: "uppercase",
+              color: C.teal,
+              fontWeight: 600,
+              marginBottom: "1.5rem",
+            }}
+          >
+            Welcome back
+          </div>
+          <h1
+            style={{
+              fontFamily: "var(--font-source-serif), serif",
+              fontSize: "clamp(1.75rem, 4vw, 2.5rem)",
+              fontWeight: 700,
+              color: C.brown,
+              lineHeight: 1.15,
+              marginBottom: "1rem",
+              letterSpacing: "-0.02em",
+            }}
+          >
+            Your AI is already tuned.
+          </h1>
+          <p
+            style={{
+              fontSize: "0.95rem",
+              color: C.brownMid,
+              lineHeight: 1.6,
+              marginBottom: "2rem",
+              maxWidth: 400,
+              margin: "0 auto 2rem",
+            }}
+          >
+            Your boot file is saved from last time. Copy it and paste it into
+            your AI&apos;s context area.
+          </p>
+          <div
+            style={{
+              display: "flex",
+              gap: "0.75rem",
+              justifyContent: "center",
+              flexWrap: "wrap",
+              marginBottom: "2rem",
+            }}
+          >
+            <button
+              onClick={copyBoot}
+              style={{
+                background: C.brown,
+                color: C.cream,
+                border: "none",
+                padding: "1rem 2.5rem",
+                borderRadius: "2rem",
+                fontSize: "1rem",
+                fontWeight: 600,
+                cursor: "pointer",
+                fontFamily: "var(--font-dm-sans), sans-serif",
+              }}
+            >
+              {copied ? "Copied!" : "Copy boot file"}
+            </button>
+            <button
+              onClick={downloadBoot}
+              style={{
+                background: "transparent",
+                color: C.brown,
+                border: `1.5px solid ${C.brown}`,
+                padding: "1rem 2.5rem",
+                borderRadius: "2rem",
+                fontSize: "1rem",
+                fontWeight: 600,
+                cursor: "pointer",
+                fontFamily: "var(--font-dm-sans), sans-serif",
+              }}
+            >
+              Download .txt
+            </button>
+          </div>
+          <button
+            onClick={startFresh}
+            style={{
+              background: "transparent",
+              color: C.muted,
+              border: "none",
+              padding: "0.5rem 1rem",
+              fontSize: "0.85rem",
+              cursor: "pointer",
+              fontFamily: "var(--font-dm-sans), sans-serif",
+            }}
+          >
+            Start over with new answers
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Landing
   if (phase === -1) {
@@ -729,24 +891,26 @@ export default function AITuner() {
                 color: C.brownMid,
                 fontSize: "0.9rem",
                 lineHeight: 1.6,
-                maxWidth: 400,
+                maxWidth: 440,
                 margin: "0 auto 1.5rem",
               }}
             >
-              Your boot file is ready. Copy it and paste it as your first
-              message in any Claude, ChatGPT, or Perplexity session. Every
-              conversation from here starts with context.
+              Your boot file is saved and ready. Now paste it into your AI&apos;s
+              context area so every conversation starts with who you are.
             </p>
+
+            {/* Action buttons */}
             <div
               style={{
                 display: "flex",
                 gap: "0.75rem",
                 justifyContent: "center",
                 flexWrap: "wrap",
+                marginBottom: "2rem",
               }}
             >
               <button
-                onClick={() => setShowBoot(true)}
+                onClick={copyBoot}
                 style={{
                   background: C.brown,
                   color: C.cream,
@@ -759,10 +923,10 @@ export default function AITuner() {
                   fontFamily: "var(--font-dm-sans), sans-serif",
                 }}
               >
-                View boot file
+                {copied ? "Copied!" : "Copy to clipboard"}
               </button>
               <button
-                onClick={copyBoot}
+                onClick={downloadBoot}
                 style={{
                   background: "transparent",
                   color: C.brown,
@@ -775,9 +939,106 @@ export default function AITuner() {
                   fontFamily: "var(--font-dm-sans), sans-serif",
                 }}
               >
-                Copy to clipboard
+                Download .txt
+              </button>
+              <button
+                onClick={() => setShowBoot(true)}
+                style={{
+                  background: "transparent",
+                  color: C.brownMid,
+                  border: `1.5px solid ${C.linen}`,
+                  padding: "0.8rem 2rem",
+                  borderRadius: "2rem",
+                  fontSize: "0.9rem",
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  fontFamily: "var(--font-dm-sans), sans-serif",
+                }}
+              >
+                View boot file
               </button>
             </div>
+
+            {/* Where to paste it */}
+            <div
+              style={{
+                background: C.surface,
+                border: `1px solid ${C.linen}`,
+                borderRadius: "1rem",
+                padding: "1.5rem",
+                maxWidth: 440,
+                margin: "0 auto 1.5rem",
+                textAlign: "left",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: "0.7rem",
+                  letterSpacing: "0.15em",
+                  textTransform: "uppercase",
+                  color: C.gold,
+                  fontWeight: 600,
+                  marginBottom: "1rem",
+                }}
+              >
+                Where to paste your boot file
+              </div>
+              {[
+                {
+                  name: "Claude",
+                  step: "Settings \u2192 Projects \u2192 New Project \u2192 paste in Project Instructions",
+                },
+                {
+                  name: "ChatGPT",
+                  step: "Settings \u2192 Personalization \u2192 Custom Instructions \u2192 paste in \"What would you like ChatGPT to know about you?\"",
+                },
+                {
+                  name: "Perplexity",
+                  step: "Settings \u2192 Profile \u2192 AI Profile \u2192 paste in the bio field",
+                },
+              ].map((item) => (
+                <div
+                  key={item.name}
+                  style={{
+                    marginBottom: "0.75rem",
+                    fontSize: "0.85rem",
+                    lineHeight: 1.6,
+                    color: C.brown,
+                  }}
+                >
+                  <span style={{ fontWeight: 600 }}>{item.name}:</span>{" "}
+                  <span style={{ color: C.brownMid }}>{item.step}</span>
+                </div>
+              ))}
+              <p
+                style={{
+                  fontSize: "0.8rem",
+                  color: C.muted,
+                  marginTop: "0.75rem",
+                  marginBottom: 0,
+                  lineHeight: 1.5,
+                  fontStyle: "italic",
+                }}
+              >
+                Your boot file is auto-saved. Come back anytime to copy it again.
+              </p>
+            </div>
+
+            {/* Start fresh */}
+            <button
+              onClick={startFresh}
+              style={{
+                background: "transparent",
+                color: C.muted,
+                border: "none",
+                padding: "0.5rem 1rem",
+                fontSize: "0.8rem",
+                cursor: "pointer",
+                fontFamily: "var(--font-dm-sans), sans-serif",
+              }}
+            >
+              Start over with new answers
+            </button>
           </div>
         )}
 
