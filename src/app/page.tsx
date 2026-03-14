@@ -243,7 +243,10 @@ export default function AITuner() {
       });
 
       const data = await response.json();
-      const raw = data.text || "";
+      const raw = (data.text || "")
+        .replace(/^```(?:json)?\s*\n?/i, "")
+        .replace(/\n?```\s*$/i, "")
+        .trim();
 
       let parsed: { reply: string; bootFile: string };
       try {
