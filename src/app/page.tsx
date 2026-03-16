@@ -149,6 +149,10 @@ export default function AITuner() {
   const [showBoot, setShowBoot] = useState(false);
   const [complete, setComplete] = useState(false);
   const [listening, setListening] = useState(false);
+  const [readyToAdvance, setReadyToAdvance] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackText, setFeedbackText] = useState("");
+  const [feedbackSent, setFeedbackSent] = useState(false);
   const chatEnd = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -268,7 +272,8 @@ export default function AITuner() {
       });
 
       if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `API error: ${response.status}`);
       }
 
       const data = await response.json();
@@ -297,23 +302,18 @@ export default function AITuner() {
       }
 
       if (currentPhase < PHASES.length - 1) {
-        setTimeout(() => {
-          const next = currentPhase + 1;
-          setPhase(next);
-          setMessages((prev) => [
-            ...prev,
-            { role: "system", text: PHASES[next].question, phase: next },
-          ]);
-        }, 2000);
+        setReadyToAdvance(true);
       } else {
         setComplete(true);
       }
-    } catch {
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : "Something went wrong.";
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          text: "Something went wrong. Please try sending your answer again.",
+          text: `${errorMessage} Please try sending your answer again.`,
           phase: currentPhase,
         },
       ]);
@@ -322,6 +322,17 @@ export default function AITuner() {
     setLoading(false);
     setTimeout(() => inputRef.current?.focus(), 100);
   }, [input, loading, phase]);
+
+  const advancePhase = useCallback(() => {
+    const next = phase + 1;
+    setPhase(next);
+    setReadyToAdvance(false);
+    setMessages((prev) => [
+      ...prev,
+      { role: "system", text: PHASES[next].question, phase: next },
+    ]);
+    setTimeout(() => inputRef.current?.focus(), 100);
+  }, [phase]);
 
   const fullBootFile = bootSections.map((s) => s.content).join("\n\n");
 
@@ -350,6 +361,25 @@ export default function AITuner() {
     setPhase(-1);
     setComplete(false);
     setShowBoot(false);
+  };
+
+  const submitFeedback = () => {
+    if (!feedbackText.trim()) return;
+    const feedbackLog = JSON.parse(
+      localStorage.getItem("ai-tuner-feedback") || "[]"
+    );
+    feedbackLog.push({
+      text: feedbackText.trim(),
+      phase,
+      timestamp: new Date().toISOString(),
+    });
+    localStorage.setItem("ai-tuner-feedback", JSON.stringify(feedbackLog));
+    setFeedbackText("");
+    setFeedbackSent(true);
+    setTimeout(() => {
+      setFeedbackSent(false);
+      setShowFeedback(false);
+    }, 2000);
   };
 
   // Returning user with saved boot file
@@ -770,16 +800,46 @@ export default function AITuner() {
         }}
       >
         {messages.map((msg, i) => (
-          <div
-            key={i}
-            className="animate-fade-in"
-            style={{
-              marginBottom: "1.25rem",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: msg.role === "user" ? "flex-end" : "flex-start",
-            }}
-          >
+          <div key={i}>
+            {msg.role === "system" && msg.phase! > 0 && (
+              <div
+                className="animate-fade-in"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.75rem",
+                  margin: "1.5rem 0",
+                }}
+              >
+                <div style={{ flex: 1, height: 1, background: C.linen }} />
+                <div
+                  style={{
+                    fontSize: "0.7rem",
+                    letterSpacing: "0.12em",
+                    textTransform: "uppercase",
+                    color: C.brownMid,
+                    fontWeight: 600,
+                    background: C.cream,
+                    padding: "0.3rem 0.9rem",
+                    borderRadius: "1rem",
+                    border: `1px solid ${C.linen}`,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Phase {msg.phase! + 1} of {PHASES.length} &middot; {PHASES[msg.phase!]?.label}
+                </div>
+                <div style={{ flex: 1, height: 1, background: C.linen }} />
+              </div>
+            )}
+            <div
+              className="animate-fade-in"
+              style={{
+                marginBottom: "1.25rem",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: msg.role === "user" ? "flex-end" : "flex-start",
+              }}
+            >
             {msg.role === "system" && (
               <div
                 style={{
@@ -825,6 +885,7 @@ export default function AITuner() {
             >
               {msg.text}
             </div>
+            </div>
           </div>
         ))}
 
@@ -849,6 +910,46 @@ export default function AITuner() {
                 }}
               />
             ))}
+          </div>
+        )}
+
+        {readyToAdvance && !loading && (
+          <div
+            className="animate-fade-in"
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              padding: "1rem 0",
+            }}
+          >
+            <button
+              onClick={advancePhase}
+              style={{
+                background: C.gold,
+                color: C.brown,
+                border: "none",
+                padding: "0.7rem 1.8rem",
+                borderRadius: "2rem",
+                fontSize: "0.85rem",
+                fontWeight: 600,
+                cursor: "pointer",
+                fontFamily: "var(--font-dm-sans), sans-serif",
+                transition: "all 0.25s",
+                boxShadow: `0 2px 12px ${C.gold}33`,
+              }}
+              onMouseEnter={(e) => {
+                const t = e.target as HTMLButtonElement;
+                t.style.transform = "translateY(-1px)";
+                t.style.boxShadow = `0 4px 16px ${C.gold}44`;
+              }}
+              onMouseLeave={(e) => {
+                const t = e.target as HTMLButtonElement;
+                t.style.transform = "translateY(0)";
+                t.style.boxShadow = `0 2px 12px ${C.gold}33`;
+              }}
+            >
+              Next question &#8594;
+            </button>
           </div>
         )}
 
@@ -1196,6 +1297,153 @@ export default function AITuner() {
             >
               &#8593;
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Feedback button */}
+      <button
+        onClick={() => setShowFeedback(true)}
+        style={{
+          position: "fixed",
+          bottom: phase === -1 || complete ? "1.5rem" : "6rem",
+          right: "1.5rem",
+          background: C.surface,
+          color: C.brownMid,
+          border: `1px solid ${C.linen}`,
+          width: 40,
+          height: 40,
+          borderRadius: "50%",
+          fontSize: "1rem",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+          zIndex: 20,
+          transition: "all 0.2s",
+        }}
+        title="Send feedback or report a bug"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        </svg>
+      </button>
+
+      {/* Feedback modal */}
+      {showFeedback && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.3)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 30,
+            padding: "1rem",
+          }}
+          onClick={() => setShowFeedback(false)}
+        >
+          <div
+            className="animate-fade-in"
+            style={{
+              background: C.surface,
+              borderRadius: "1rem",
+              padding: "1.5rem",
+              maxWidth: 400,
+              width: "100%",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              style={{
+                fontFamily: "var(--font-source-serif), serif",
+                fontSize: "1.1rem",
+                color: C.brown,
+                marginBottom: "0.25rem",
+              }}
+            >
+              Feedback or bug report
+            </h3>
+            <p
+              style={{
+                fontSize: "0.8rem",
+                color: C.muted,
+                marginBottom: "1rem",
+                lineHeight: 1.5,
+              }}
+            >
+              Let us know what happened or how we can improve.
+            </p>
+            {feedbackSent ? (
+              <div
+                style={{
+                  textAlign: "center",
+                  padding: "1rem 0",
+                  color: C.teal,
+                  fontWeight: 600,
+                  fontSize: "0.9rem",
+                }}
+              >
+                Thanks for your feedback!
+              </div>
+            ) : (
+              <>
+                <textarea
+                  value={feedbackText}
+                  onChange={(e) => setFeedbackText(e.target.value)}
+                  placeholder="Describe the issue or share your thoughts..."
+                  rows={4}
+                  style={{
+                    width: "100%",
+                    padding: "0.75rem",
+                    borderRadius: "0.5rem",
+                    border: `1.5px solid ${C.linen}`,
+                    fontSize: "0.85rem",
+                    fontFamily: "var(--font-dm-sans), sans-serif",
+                    resize: "vertical",
+                    outline: "none",
+                    color: C.brown,
+                    marginBottom: "0.75rem",
+                  }}
+                />
+                <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+                  <button
+                    onClick={() => setShowFeedback(false)}
+                    style={{
+                      background: "transparent",
+                      color: C.muted,
+                      border: "none",
+                      padding: "0.5rem 1rem",
+                      fontSize: "0.85rem",
+                      cursor: "pointer",
+                      fontFamily: "var(--font-dm-sans), sans-serif",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={submitFeedback}
+                    disabled={!feedbackText.trim()}
+                    style={{
+                      background: feedbackText.trim() ? C.brown : C.linen,
+                      color: feedbackText.trim() ? C.cream : C.muted,
+                      border: "none",
+                      padding: "0.5rem 1.25rem",
+                      borderRadius: "1.5rem",
+                      fontSize: "0.85rem",
+                      fontWeight: 600,
+                      cursor: feedbackText.trim() ? "pointer" : "default",
+                      fontFamily: "var(--font-dm-sans), sans-serif",
+                    }}
+                  >
+                    Send
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
