@@ -156,6 +156,8 @@ export default function AITuner() {
   const [listening, setListening] = useState(false);
   const [showContinue, setShowContinue] = useState(false);
   const [phaseMessages, setPhaseMessages] = useState<ApiMessage[]>([]);
+  const [turnCount, setTurnCount] = useState(0);
+  const MAX_TURNS = 3;
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
   const [feedbackSent, setFeedbackSent] = useState(false);
@@ -262,6 +264,8 @@ export default function AITuner() {
     setShowContinue(false);
     setPhaseMessages([]);
 
+    setTurnCount(0);
+
     const next = phase + 1;
     if (next >= PHASES.length) {
       setComplete(true);
@@ -301,11 +305,20 @@ export default function AITuner() {
       { role: "user", content: userMsg },
     ];
 
-    const systemPrompt = isFollowUp
-      ? `${PHASES[currentPhase].systemPrompt}
+    const currentTurn = turnCount + 1;
+    setTurnCount(currentTurn);
 
-IMPORTANT: This is a follow-up in the same conversation phase. The user is responding to your previous message. Continue naturally — acknowledge what they shared, go deeper if there's more to explore, and extract any new information into the bootFile. Keep it warm and conversational. Don't repeat questions they've already answered.`
-      : PHASES[currentPhase].systemPrompt;
+    let systemPrompt = PHASES[currentPhase].systemPrompt;
+
+    if (isFollowUp && currentTurn < MAX_TURNS) {
+      systemPrompt += `
+
+IMPORTANT: This is turn ${currentTurn} of ${MAX_TURNS} for this phase. The user is responding to your previous message. Continue naturally — acknowledge what they shared, go deeper if there's more to explore, and extract any new information into the bootFile. Keep it warm and conversational. Don't repeat questions they've already answered.`;
+    } else if (currentTurn >= MAX_TURNS) {
+      systemPrompt += `
+
+IMPORTANT: This is the FINAL turn (${currentTurn} of ${MAX_TURNS}) for this phase. Wrap up warmly: acknowledge what they shared, give a brief summary of what you captured, and close with something like "Got it, let's keep moving." Do NOT ask another follow-up question. Extract any final information into the bootFile. Make the user feel heard and ready to move on.`;
+    }
 
     try {
       const response = await fetch("/api/tune", {
@@ -345,7 +358,7 @@ IMPORTANT: This is a follow-up in the same conversation phase. The user is respo
 
       if (parsed.bootFile) {
         if (isFollowUp) {
-          // Append to existing boot section for this phase
+          // Replace (not append) boot section to avoid duplication
           setBootSections((prev) => {
             const updated = [...prev];
             const existing = updated.findIndex(
@@ -354,7 +367,7 @@ IMPORTANT: This is a follow-up in the same conversation phase. The user is respo
             if (existing >= 0) {
               updated[existing] = {
                 ...updated[existing],
-                content: updated[existing].content + "\n" + parsed.bootFile,
+                content: parsed.bootFile,
               };
             } else {
               updated.push({
@@ -377,8 +390,14 @@ IMPORTANT: This is a follow-up in the same conversation phase. The user is respo
         }
       }
 
-      // Show the "next" option after a gentle pause — let the user read first
-      if (currentPhase < PHASES.length - 1) {
+      // On final turn, auto-show continue faster. Otherwise, gentle nudge.
+      if (currentTurn >= MAX_TURNS) {
+        if (currentPhase < PHASES.length - 1) {
+          setTimeout(() => setShowContinue(true), 1500);
+        } else {
+          setTimeout(() => setComplete(true), 1500);
+        }
+      } else if (currentPhase < PHASES.length - 1) {
         setTimeout(() => setShowContinue(true), 3500);
       } else {
         setTimeout(() => setComplete(true), 1500);
@@ -398,7 +417,7 @@ IMPORTANT: This is a follow-up in the same conversation phase. The user is respo
 
     setLoading(false);
     setTimeout(() => inputRef.current?.focus(), 100);
-  }, [input, loading, phase, phaseMessages]);
+  }, [input, loading, phase, phaseMessages, turnCount]);
 
   const fullBootFile = bootSections.map((s) => s.content).join("\n\n");
 
@@ -434,6 +453,7 @@ IMPORTANT: This is a follow-up in the same conversation phase. The user is respo
   // Dynamic placeholder based on conversation state
   const getPlaceholder = () => {
     if (listening) return "Listening... tap the mic to stop";
+    if (turnCount === MAX_TURNS - 1) return "Last follow-up for this question...";
     if (showContinue) return "Keep talking, or move on when you're ready...";
     return "Type or tap the mic to talk...";
   };
@@ -1239,7 +1259,7 @@ IMPORTANT: This is a follow-up in the same conversation phase. The user is respo
       </div>
 
       {/* Input area */}
-      {!complete && (
+      {!complete && turnCount < MAX_TURNS && (
         <div
           style={{
             position: "sticky",
