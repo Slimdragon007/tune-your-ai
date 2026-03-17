@@ -18,11 +18,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { message, systemPrompt } = await request.json();
+  const { messages, systemPrompt } = await request.json();
 
-  if (!message || !systemPrompt) {
+  if (!messages?.length || !systemPrompt) {
     return NextResponse.json(
-      { error: "message and systemPrompt are required" },
+      { error: "messages and systemPrompt are required" },
       { status: 400 }
     );
   }
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
       model: "claude-sonnet-4-20250514",
       max_tokens: 2048,
       system: systemPrompt,
-      messages: [{ role: "user", content: message }],
+      messages,
     });
 
     const text =

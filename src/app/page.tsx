@@ -140,6 +140,11 @@ interface BootSection {
   content: string;
 }
 
+interface ApiMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export default function AITuner() {
   const [phase, setPhase] = useState(-1);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -149,7 +154,8 @@ export default function AITuner() {
   const [showBoot, setShowBoot] = useState(false);
   const [complete, setComplete] = useState(false);
   const [listening, setListening] = useState(false);
-  const [readyToAdvance, setReadyToAdvance] = useState(false);
+  const [showContinue, setShowContinue] = useState(false);
+  const [phaseMessages, setPhaseMessages] = useState<ApiMessage[]>([]);
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
   const [feedbackSent, setFeedbackSent] = useState(false);
@@ -183,7 +189,7 @@ export default function AITuner() {
 
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  }, [messages, loading, showContinue]);
 
   const toggleVoice = useCallback(() => {
     if (listening && recognitionRef.current) {
@@ -252,22 +258,62 @@ export default function AITuner() {
     ]);
   };
 
+  const advancePhase = useCallback(() => {
+    setShowContinue(false);
+    setPhaseMessages([]);
+
+    const next = phase + 1;
+    if (next >= PHASES.length) {
+      setComplete(true);
+      return;
+    }
+
+    // Brief breathing room before the next phase appears
+    setTimeout(() => {
+      setPhase(next);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "system",
+          text: PHASES[next].question,
+          phase: next,
+        },
+      ]);
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }, 800);
+  }, [phase]);
+
   const sendMessage = useCallback(async () => {
     if (!input.trim() || loading) return;
     const userMsg = input.trim();
     setInput("");
+    setShowContinue(false);
 
     const currentPhase = phase;
+    const isFollowUp = phaseMessages.length > 0;
+
     setMessages((prev) => [...prev, { role: "user", text: userMsg }]);
     setLoading(true);
+
+    // Build conversation history for multi-turn within a phase
+    const apiMessages: ApiMessage[] = [
+      ...phaseMessages,
+      { role: "user", content: userMsg },
+    ];
+
+    const systemPrompt = isFollowUp
+      ? `${PHASES[currentPhase].systemPrompt}
+
+IMPORTANT: This is a follow-up in the same conversation phase. The user is responding to your previous message. Continue naturally — acknowledge what they shared, go deeper if there's more to explore, and extract any new information into the bootFile. Keep it warm and conversational. Don't repeat questions they've already answered.`
+      : PHASES[currentPhase].systemPrompt;
 
     try {
       const response = await fetch("/api/tune", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: userMsg,
-          systemPrompt: PHASES[currentPhase].systemPrompt,
+          messages: apiMessages,
+          systemPrompt,
         }),
       });
 
@@ -290,21 +336,52 @@ export default function AITuner() {
         { role: "assistant", text: parsed.reply, phase: currentPhase },
       ]);
 
+      // Update conversation history for this phase
+      setPhaseMessages((prev) => [
+        ...prev,
+        { role: "user", content: userMsg },
+        { role: "assistant", content: raw },
+      ]);
+
       if (parsed.bootFile) {
-        setBootSections((prev) => [
-          ...prev,
-          {
-            phase: currentPhase,
-            label: PHASES[currentPhase].label,
-            content: parsed.bootFile,
-          },
-        ]);
+        if (isFollowUp) {
+          // Append to existing boot section for this phase
+          setBootSections((prev) => {
+            const updated = [...prev];
+            const existing = updated.findIndex(
+              (s) => s.phase === currentPhase
+            );
+            if (existing >= 0) {
+              updated[existing] = {
+                ...updated[existing],
+                content: updated[existing].content + "\n" + parsed.bootFile,
+              };
+            } else {
+              updated.push({
+                phase: currentPhase,
+                label: PHASES[currentPhase].label,
+                content: parsed.bootFile,
+              });
+            }
+            return updated;
+          });
+        } else {
+          setBootSections((prev) => [
+            ...prev,
+            {
+              phase: currentPhase,
+              label: PHASES[currentPhase].label,
+              content: parsed.bootFile,
+            },
+          ]);
+        }
       }
 
+      // Show the "next" option after a gentle pause — let the user read first
       if (currentPhase < PHASES.length - 1) {
-        setReadyToAdvance(true);
+        setTimeout(() => setShowContinue(true), 3500);
       } else {
-        setComplete(true);
+        setTimeout(() => setComplete(true), 1500);
       }
     } catch (err) {
       const errorMessage =
@@ -321,18 +398,7 @@ export default function AITuner() {
 
     setLoading(false);
     setTimeout(() => inputRef.current?.focus(), 100);
-  }, [input, loading, phase]);
-
-  const advancePhase = useCallback(() => {
-    const next = phase + 1;
-    setPhase(next);
-    setReadyToAdvance(false);
-    setMessages((prev) => [
-      ...prev,
-      { role: "system", text: PHASES[next].question, phase: next },
-    ]);
-    setTimeout(() => inputRef.current?.focus(), 100);
-  }, [phase]);
+  }, [input, loading, phase, phaseMessages]);
 
   const fullBootFile = bootSections.map((s) => s.content).join("\n\n");
 
@@ -361,6 +427,15 @@ export default function AITuner() {
     setPhase(-1);
     setComplete(false);
     setShowBoot(false);
+    setShowContinue(false);
+    setPhaseMessages([]);
+  };
+
+  // Dynamic placeholder based on conversation state
+  const getPlaceholder = () => {
+    if (listening) return "Listening... tap the mic to stop";
+    if (showContinue) return "Keep talking, or move on when you're ready...";
+    return "Type or tap the mic to talk...";
   };
 
   const submitFeedback = () => {
@@ -558,7 +633,7 @@ export default function AITuner() {
               margin: "0 auto 2.5rem",
             }}
           >
-            7 questions. 30 minutes. You'll walk away with a personalized AI
+            7 questions. 30 minutes. You&apos;ll walk away with a personalized AI
             system that knows who you are, how you work, and what you need. Type
             or just talk. No technical skills required.
           </p>
@@ -689,7 +764,7 @@ export default function AITuner() {
                 borderRadius: 2,
                 background:
                   i < phase ? C.teal : i === phase ? C.gold : C.linen,
-                transition: "all 0.4s ease",
+                transition: "all 0.6s ease",
               }}
             />
           ))}
@@ -801,6 +876,7 @@ export default function AITuner() {
       >
         {messages.map((msg, i) => (
           <div key={i}>
+            {/* Phase divider between phases */}
             {msg.role === "system" && msg.phase! > 0 && (
               <div
                 className="animate-fade-in"
@@ -840,51 +916,51 @@ export default function AITuner() {
                 alignItems: msg.role === "user" ? "flex-end" : "flex-start",
               }}
             >
-            {msg.role === "system" && (
+              {msg.role === "system" && (
+                <div
+                  style={{
+                    fontSize: "0.65rem",
+                    letterSpacing: "0.15em",
+                    textTransform: "uppercase",
+                    color: C.gold,
+                    fontWeight: 600,
+                    marginBottom: "0.5rem",
+                  }}
+                >
+                  {PHASES[msg.phase!]?.icon} {PHASES[msg.phase!]?.label}
+                </div>
+              )}
               <div
                 style={{
-                  fontSize: "0.65rem",
-                  letterSpacing: "0.15em",
-                  textTransform: "uppercase",
-                  color: C.gold,
-                  fontWeight: 600,
-                  marginBottom: "0.5rem",
+                  maxWidth: msg.role === "user" ? "85%" : "90%",
+                  padding: msg.role === "system" ? "0" : "0.9rem 1.1rem",
+                  borderRadius:
+                    msg.role === "user"
+                      ? "1rem 1rem 0.25rem 1rem"
+                      : "1rem 1rem 1rem 0.25rem",
+                  background:
+                    msg.role === "user"
+                      ? C.brown
+                      : msg.role === "system"
+                        ? "transparent"
+                        : C.surface,
+                  color: msg.role === "user" ? C.cream : C.brown,
+                  fontSize: msg.role === "system" ? "1.15rem" : "0.9rem",
+                  lineHeight: 1.7,
+                  fontFamily:
+                    msg.role === "system"
+                      ? "var(--font-source-serif), serif"
+                      : "var(--font-dm-sans), sans-serif",
+                  fontWeight: 400,
+                  border:
+                    msg.role === "assistant"
+                      ? `1px solid ${C.linen}`
+                      : "none",
+                  fontStyle: msg.role === "system" ? "italic" : "normal",
                 }}
               >
-                {PHASES[msg.phase!]?.icon} {PHASES[msg.phase!]?.label}
+                {msg.text}
               </div>
-            )}
-            <div
-              style={{
-                maxWidth: msg.role === "user" ? "85%" : "90%",
-                padding: msg.role === "system" ? "0" : "0.9rem 1.1rem",
-                borderRadius:
-                  msg.role === "user"
-                    ? "1rem 1rem 0.25rem 1rem"
-                    : "1rem 1rem 1rem 0.25rem",
-                background:
-                  msg.role === "user"
-                    ? C.brown
-                    : msg.role === "system"
-                      ? "transparent"
-                      : C.surface,
-                color: msg.role === "user" ? C.cream : C.brown,
-                fontSize: msg.role === "system" ? "1.15rem" : "0.9rem",
-                lineHeight: 1.7,
-                fontFamily:
-                  msg.role === "system"
-                    ? "var(--font-source-serif), serif"
-                    : "var(--font-dm-sans), sans-serif",
-                fontWeight: 400,
-                border:
-                  msg.role === "assistant"
-                    ? `1px solid ${C.linen}`
-                    : "none",
-                fontStyle: msg.role === "system" ? "italic" : "normal",
-              }}
-            >
-              {msg.text}
-            </div>
             </div>
           </div>
         ))}
@@ -913,43 +989,59 @@ export default function AITuner() {
           </div>
         )}
 
-        {readyToAdvance && !loading && (
+        {/* Gentle "next question" prompt */}
+        {showContinue && !loading && !complete && (
           <div
-            className="animate-fade-in"
+            className="animate-fade-in-slow"
             style={{
               display: "flex",
-              justifyContent: "center",
-              padding: "1rem 0",
+              alignItems: "center",
+              gap: "1rem",
+              padding: "1.5rem 0 0.5rem",
             }}
           >
+            <div
+              style={{
+                flex: 1,
+                height: 1,
+                background: `linear-gradient(to right, transparent, ${C.linen})`,
+              }}
+            />
             <button
               onClick={advancePhase}
               style={{
-                background: C.gold,
-                color: C.brown,
-                border: "none",
-                padding: "0.7rem 1.8rem",
+                background: "none",
+                border: `1px solid ${C.linen}`,
+                color: C.brownMid,
+                padding: "0.5rem 1.5rem",
                 borderRadius: "2rem",
-                fontSize: "0.85rem",
-                fontWeight: 600,
-                cursor: "pointer",
+                fontSize: "0.8rem",
                 fontFamily: "var(--font-dm-sans), sans-serif",
-                transition: "all 0.25s",
-                boxShadow: `0 2px 12px ${C.gold}33`,
+                fontWeight: 500,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+                transition: "all 0.3s ease",
               }}
               onMouseEnter={(e) => {
                 const t = e.target as HTMLButtonElement;
-                t.style.transform = "translateY(-1px)";
-                t.style.boxShadow = `0 4px 16px ${C.gold}44`;
+                t.style.borderColor = C.gold;
+                t.style.color = C.brown;
               }}
               onMouseLeave={(e) => {
                 const t = e.target as HTMLButtonElement;
-                t.style.transform = "translateY(0)";
-                t.style.boxShadow = `0 2px 12px ${C.gold}33`;
+                t.style.borderColor = C.linen;
+                t.style.color = C.brownMid;
               }}
             >
-              Next question &#8594;
+              next question &rarr;
             </button>
+            <div
+              style={{
+                flex: 1,
+                height: 1,
+                background: `linear-gradient(to left, transparent, ${C.linen})`,
+              }}
+            />
           </div>
         )}
 
@@ -1204,11 +1296,7 @@ export default function AITuner() {
                   sendMessage();
                 }
               }}
-              placeholder={
-                listening
-                  ? "Listening... tap the mic to stop"
-                  : "Type or tap the mic to talk..."
-              }
+              placeholder={getPlaceholder()}
               rows={2}
               style={{
                 flex: 1,

@@ -43,6 +43,39 @@
   animation: fadeIn 0.4s ease;
 }
 
+.animate-fade-in-slow {
+  animation: fadeInSlow 1.2s ease;
+}
+
+@keyframes fadeInSlow {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-phase-enter {
+  animation: phaseEnter 0.8s ease;
+}
+
+@keyframes phaseEnter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  40% {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .animate-pulse-dot {
   animation: pulse 1s ease-in-out infinite;
 }
